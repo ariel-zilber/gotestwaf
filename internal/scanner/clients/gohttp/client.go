@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -47,7 +46,6 @@ type Client struct {
 	dumpRequests  bool
 
 	dumpRequestsDir string
-	requestCounter  uint64
 }
 
 // dumpTraffic handles writing the request/response dump to a file or stdout.
@@ -61,9 +59,21 @@ func (c *Client) dumpTraffic(dump []byte, isRequest bool) {
 	}
 
 	if c.dumpRequestsDir != "" {
+		subDir := "responses"
+		if isRequest {
+			subDir = "requests"
+		}
+		
+		dirPath := filepath.Join(c.dumpRequestsDir, subDir)
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			// Handle error if you can't create the subdirectory
+			fmt.Printf("Error creating subdirectory %s: %v\n", subDir, err)
+			return
+		}
+
 		hash := sha256.Sum256(dump)
 		fileName := hex.EncodeToString(hash[:]) + ".black"
-		filePath := filepath.Join(c.dumpRequestsDir, fileName)
+		filePath := filepath.Join(dirPath, fileName)
 		_ = os.WriteFile(filePath, dump, 0644)
 	}
 }
@@ -133,8 +143,6 @@ func NewClient(cfg *config.Config, dnsResolver *dnscache.Resolver) (*Client, err
 		renewSession:    cfg.RenewSession,
 		dumpRequests:    cfg.DumpRequests,
 		dumpRequestsDir: cfg.DumpRequestsDir,
-		// THIS LINE IS THE FIX
-		requestCounter: 0,
 	}, nil
 }
 
@@ -198,8 +206,9 @@ func (c *Client) SendPayload(
 	if err != nil {
 		return nil, errors.Wrap(err, "reading response body")
 	}
-
 	resp.Body.Close()
+
+	// Replace the body so it can be read by DumpResponse
 	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	if c.dumpRequests || c.dumpRequestsDir != "" {
@@ -208,6 +217,9 @@ func (c *Client) SendPayload(
 			c.dumpTraffic(respDump, false)
 		}
 	}
+	
+	// Reset the body again so it can be read by other parts of the program
+	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	statusCode := resp.StatusCode
 	reasonIndex := strings.Index(resp.Status, " ")
@@ -267,16 +279,17 @@ func (c *Client) SendRequest(ctx context.Context, req types.Request) (types.Resp
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.Wrap(err, "reading response body")
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
 	if c.dumpRequests || c.dumpRequestsDir != "" {
 		respDump, err := httputil.DumpResponse(resp, true)
 		if err == nil {
 			c.dumpTraffic(respDump, false)
 		}
-	}
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, errors.Wrap(err, "reading response body")
 	}
 
 	statusCode := resp.StatusCode
