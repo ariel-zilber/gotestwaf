@@ -3,12 +3,19 @@ package gohttp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httputil"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -37,6 +44,28 @@ type Client struct {
 
 	followCookies bool
 	renewSession  bool
+	dumpRequests  bool
+
+	dumpRequestsDir string
+	requestCounter  uint64
+}
+
+// dumpTraffic handles writing the request/response dump to a file or stdout.
+func (c *Client) dumpTraffic(dump []byte, isRequest bool) {
+	if c.dumpRequests {
+		typeStr := "RESPONSE"
+		if isRequest {
+			typeStr = "REQUEST"
+		}
+		fmt.Printf("\n--- %s ---\n%s\n", typeStr, string(dump))
+	}
+
+	if c.dumpRequestsDir != "" {
+		hash := sha256.Sum256(dump)
+		fileName := hex.EncodeToString(hash[:]) + ".black"
+		filePath := filepath.Join(c.dumpRequestsDir, fileName)
+		_ = os.WriteFile(filePath, dump, 0644)
+	}
 }
 
 func NewClient(cfg *config.Config, dnsResolver *dnscache.Resolver) (*Client, error) {
@@ -44,7 +73,7 @@ func NewClient(cfg *config.Config, dnsResolver *dnscache.Resolver) (*Client, err
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: !cfg.TLSVerify},
 		IdleConnTimeout:     time.Duration(cfg.IdleConnTimeout) * time.Second,
 		MaxIdleConns:        cfg.MaxIdleConns,
-		MaxIdleConnsPerHost: cfg.MaxIdleConns, // net.http hardcodes DefaultMaxIdleConnsPerHost to 2!
+		MaxIdleConnsPerHost: cfg.MaxIdleConns,
 	}
 
 	if dnsResolver != nil {
@@ -56,21 +85,16 @@ func NewClient(cfg *config.Config, dnsResolver *dnscache.Resolver) (*Client, err
 		if err != nil {
 			return nil, errors.Wrap(err, "couldn't parse proxy URL")
 		}
-
 		tr.Proxy = http.ProxyURL(proxyURL)
 	}
 
 	redirectFunc = func(req *http.Request, via []*http.Request) error {
-		// if maxRedirects is equal to 0 then tell the HTTP client to use
-		// the first HTTP response (disable following redirects)
 		if cfg.MaxRedirects == 0 {
 			return http.ErrUseLastResponse
 		}
-
 		if len(via) > cfg.MaxRedirects {
 			return errors.New("max redirect number exceeded")
 		}
-
 		return nil
 	}
 
@@ -84,7 +108,6 @@ func NewClient(cfg *config.Config, dnsResolver *dnscache.Resolver) (*Client, err
 		if err != nil {
 			return nil, err
 		}
-
 		client.Jar = jar
 	}
 
@@ -96,12 +119,22 @@ func NewClient(cfg *config.Config, dnsResolver *dnscache.Resolver) (*Client, err
 		configuredHeaders[header] = value
 	}
 
+	if cfg.DumpRequestsDir != "" {
+		if err := os.MkdirAll(cfg.DumpRequestsDir, 0755); err != nil {
+			return nil, errors.Wrap(err, "failed to create dump requests directory")
+		}
+	}
+
 	return &Client{
-		client:        client,
-		headers:       configuredHeaders,
-		hostHeader:    configuredHeaders["Host"],
-		followCookies: cfg.FollowCookies,
-		renewSession:  cfg.RenewSession,
+		client:          client,
+		headers:         configuredHeaders,
+		hostHeader:      configuredHeaders["Host"],
+		followCookies:   cfg.FollowCookies,
+		renewSession:    cfg.RenewSession,
+		dumpRequests:    cfg.DumpRequests,
+		dumpRequestsDir: cfg.DumpRequestsDir,
+		// THIS LINE IS THE FIX
+		requestCounter: 0,
 	}, nil
 }
 
@@ -125,13 +158,9 @@ func (c *Client) SendPayload(
 	isUAPlaceholder := payloadInfo.PlaceholderName == placeholder.DefaultUserAgent.GetName()
 
 	for header, value := range c.headers {
-		// Skip setting the User-Agent header to the value from the GoTestWAF config file
-		// if the placeholder is UserAgent.
 		if strings.EqualFold(header, placeholder.UAHeader) && isUAPlaceholder {
 			continue
 		}
-
-		// Do not replace header values for RawRequest headers
 		if req.Header.Get(header) == "" {
 			req.Header.Set(header, value)
 		}
@@ -153,6 +182,13 @@ func (c *Client) SendPayload(
 		}
 	}
 
+	if c.dumpRequests || c.dumpRequestsDir != "" {
+		reqDump, err := httputil.DumpRequestOut(req, true)
+		if err == nil {
+			c.dumpTraffic(reqDump, true)
+		}
+	}
+
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, errors.Wrap(err, "sending http request")
@@ -163,12 +199,17 @@ func (c *Client) SendPayload(
 		return nil, errors.Wrap(err, "reading response body")
 	}
 
-	// body reuse
 	resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-	statusCode := resp.StatusCode
+	if c.dumpRequests || c.dumpRequestsDir != "" {
+		respDump, err := httputil.DumpResponse(resp, true)
+		if err == nil {
+			c.dumpTraffic(respDump, false)
+		}
+	}
 
+	statusCode := resp.StatusCode
 	reasonIndex := strings.Index(resp.Status, " ")
 	reason := resp.Status[reasonIndex+1:]
 
@@ -199,7 +240,6 @@ func (c *Client) SendRequest(ctx context.Context, req types.Request) (types.Resp
 		if err != nil {
 			return nil, errors.Wrap(err, "couldn't get cookies for malicious request")
 		}
-
 		for _, cookie := range cookies {
 			r.Req.AddCookie(cookie)
 		}
@@ -214,12 +254,25 @@ func (c *Client) SendRequest(ctx context.Context, req types.Request) (types.Resp
 		r.Req.Header.Set(clients.GTWDebugHeader, r.DebugHeaderValue)
 	}
 
+	if c.dumpRequests || c.dumpRequestsDir != "" {
+		reqDump, err := httputil.DumpRequestOut(r.Req, true)
+		if err == nil {
+			c.dumpTraffic(reqDump, true)
+		}
+	}
+
 	resp, err := c.client.Do(r.Req)
 	if err != nil {
 		return nil, errors.Wrap(err, "sending http request")
 	}
-
 	defer resp.Body.Close()
+
+	if c.dumpRequests || c.dumpRequestsDir != "" {
+		respDump, err := httputil.DumpResponse(resp, true)
+		if err == nil {
+			c.dumpTraffic(respDump, false)
+		}
+	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {

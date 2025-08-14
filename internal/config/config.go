@@ -22,7 +22,8 @@ type Config struct {
 	Proxy          string `mapstructure:"proxy"`
 	AddHeader      string `mapstructure:"addHeader"`
 	AddDebugHeader bool   `mapstructure:"addDebugHeader"`
-
+	DumpRequests   bool   `mapstructure:"dumpRequests"`
+	DumpRequestsDir string `mapstructure:"dumpRequestsDir"`
 	// GoHTTP client only settings
 	MaxIdleConns    int  `mapstructure:"maxIdleConns"`
 	MaxRedirects    int  `mapstructure:"maxRedirects"`

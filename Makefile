@@ -1,7 +1,7 @@
 GOTESTWAF_VERSION := $(shell git describe --tags)
 
 gotestwaf:
-	DOCKER_BUILDKIT=1 docker build --force-rm -t gotestwaf .
+	DOCKER_BUILDKIT=1 docker build --force-rm -t gotestwaf . -t cofeecoder/gotestwaf:latest
 
 gotestwaf_bin:
 	go build -o gotestwaf \
@@ -12,7 +12,7 @@ modsec:
 	docker pull mendhak/http-https-echo:31
 	docker run --rm -d --name gotestwaf_test_app -p 8088:8080 mendhak/http-https-echo:31
 	docker pull owasp/modsecurity-crs:nginx-alpine
-	docker run --rm -d --name gotestwaf_modsec -p 8080:8080 -p 8443:8443 \
+	docker run --rm -d --name gotestwaf_modsec -p 8084:8080 -p 8445:8443 \
 		-e BACKEND="http://$$(docker inspect --format '{{.NetworkSettings.IPAddress}}' gotestwaf_test_app):8080" \
 		-e PARANOIA=1 \
 		owasp/modsecurity-crs:nginx-alpine
@@ -27,8 +27,7 @@ scan_local:
 	go run ./cmd --url=http://127.0.0.1:8080/ --workers 200 --noEmailReport
 
 scan_local_from_docker:
-	docker run --rm -v ${PWD}/reports:/app/reports --network="host" \
-		gotestwaf --url=http://127.0.0.1:8080/ --workers 200 --noEmailReport
+	docker run --rm -v ${PWD}/reports:/app/reports --network="host" cofeecoder/gotestwaf:latest --url=http://127.0.0.1:8080/ --workers 200 --noEmailReport
 
 modsec_crs_regression_tests_convert:
 	rm -rf .tmp/coreruleset
