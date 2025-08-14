@@ -49,33 +49,33 @@ type Client struct {
 }
 
 // dumpTraffic handles writing the request/response dump to a file or stdout.
-func (c *Client) dumpTraffic(dump []byte, isRequest bool) {
-	if c.dumpRequests {
-		typeStr := "RESPONSE"
-		if isRequest {
-			typeStr = "REQUEST"
-		}
-		fmt.Printf("\n--- %s ---\n%s\n", typeStr, string(dump))
-	}
+func (c *Client) dumpTraffic(dump []byte, isRequest bool, testCaseName string) {
+    if c.dumpRequests {
+        typeStr := "RESPONSE"
+        if isRequest {
+            typeStr = "REQUEST"
+        }
+        fmt.Printf("\n--- %s ---\n%s\n", typeStr, string(dump))
+    }
 
-	if c.dumpRequestsDir != "" {
-		subDir := "responses"
-		if isRequest {
-			subDir = "requests"
-		}
-		
-		dirPath := filepath.Join(c.dumpRequestsDir, subDir)
-		if err := os.MkdirAll(dirPath, 0755); err != nil {
-			// Handle error if you can't create the subdirectory
-			fmt.Printf("Error creating subdirectory %s: %v\n", subDir, err)
-			return
-		}
+    if c.dumpRequestsDir != "" {
+        subDir := "responses"
+        if isRequest {
+            subDir = "requests"
+        }
+        
+        // Create directory structure: <dumpDir>/<testCaseName>/<requests_or_responses>/
+        dirPath := filepath.Join(c.dumpRequestsDir, testCaseName, subDir)
+        if err := os.MkdirAll(dirPath, 0755); err != nil {
+            fmt.Printf("Error creating subdirectory %s: %v\n", dirPath, err)
+            return
+        }
 
-		hash := sha256.Sum256(dump)
-		fileName := hex.EncodeToString(hash[:]) + ".black"
-		filePath := filepath.Join(dirPath, fileName)
-		_ = os.WriteFile(filePath, dump, 0644)
-	}
+        hash := sha256.Sum256(dump)
+        fileName := hex.EncodeToString(hash[:]) + ".black"
+        filePath := filepath.Join(dirPath, fileName)
+        _ = os.WriteFile(filePath, dump, 0644)
+    }
 }
 
 func NewClient(cfg *config.Config, dnsResolver *dnscache.Resolver) (*Client, error) {
@@ -193,7 +193,7 @@ func (c *Client) SendPayload(
 	if c.dumpRequests || c.dumpRequestsDir != "" {
 		reqDump, err := httputil.DumpRequestOut(req, true)
 		if err == nil {
-			c.dumpTraffic(reqDump, true)
+            c.dumpTraffic(reqDump, true, payloadInfo.TestCaseName)
 		}
 	}
 
@@ -288,7 +288,7 @@ func (c *Client) SendRequest(ctx context.Context, req types.Request) (types.Resp
 	if c.dumpRequests || c.dumpRequestsDir != "" {
 		respDump, err := httputil.DumpResponse(resp, true)
 		if err == nil {
-			c.dumpTraffic(respDump, false)
+            c.dumpTraffic(respDump, false, payloadInfo.TestCaseName)
 		}
 	}
 

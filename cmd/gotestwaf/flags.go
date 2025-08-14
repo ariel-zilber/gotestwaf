@@ -11,7 +11,7 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
+	"github.comcom/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"golang.org/x/crypto/ssh/terminal"
@@ -21,7 +21,6 @@ import (
 	"github.com/wallarm/gotestwaf/internal/report"
 	"github.com/wallarm/gotestwaf/internal/version"
 )
-
 const (
 	textLogFormat = "text"
 	jsonLogFormat = "json"
@@ -82,6 +81,37 @@ var usage = func() {
 	usage := cliDescription
 	fmt.Fprintf(os.Stdout, usage, os.Args[0])
 	flag.PrintDefaults()
+}
+// ADD THIS FUNCTION
+func parseFlags() (args []string, err error) {
+	reportPath := filepath.Join(".", defaultReportPath)
+	testCasesPath := filepath.Join(".", defaultTestCasesPath)
+
+	flag.Usage = usage
+
+	// General parameters
+	flag.StringVar(&configPath, "configPath", defaultConfigPath, "Path to the config file")
+	flag.BoolVar(&quiet, "quiet", false, "If present, disable verbose logging")
+	logLvl := flag.String("logLevel", "info", "Logging level: panic, fatal, error, warn, info, debug, trace")
+	flag.StringVar(&logFormat, "logFormat", textLogFormat, "Set logging format: "+strings.Join(logFormats, ", "))
+	showVersion := flag.Bool("version", false, "Show GoTestWAF version and exit")
+
+	// Target settings
+	urlParam := flag.String("url", "", "URL to check")
+	flag.Uint16("grpcPort", 0, "gRPC port to check")
+	graphqlURL := flag.String("graphqlURL", "", "GraphQL URL to check")
+	openapiFile := flag.String("openapiFile", "", "Path to openAPI file")
+
+	// Test cases settings
+	flag.String("testCase", "", "If set then only this test case will be run")
+	
+	// ADD THIS LINE
+	flag.String("testCaseRegex", "", "If set then only test cases with names matching this regex will be run")
+
+	flag.String("testCasesPath", testCasesPath, "Path to a folder with test cases")
+	flag.String("testSet", "", "If set then only this test set's cases will be run")
+
+	// ... (rest of the function is the same)
 }
 
 // parseFlags parses all GoTestWAF CLI flags

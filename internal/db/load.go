@@ -3,6 +3,7 @@ package db
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -20,10 +21,23 @@ func LoadTestCases(cfg *config.Config) (testCases []*Case, err error) {
 	}
 
 	if err = filepath.Walk(cfg.TestCasesPath, func(path string, info os.FileInfo, err error) error {
-		files = append(files, path)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			files = append(files, path)
+		}
 		return nil
 	}); err != nil {
 		return nil, err
+	}
+
+	var testCaseRegex *regexp.Regexp
+	if cfg.TestCaseRegex != "" {
+		testCaseRegex, err = regexp.Compile(cfg.TestCaseRegex)
+		if err != nil {
+			return nil, errors.Wrap(err, "compiling test case regex")
+		}
 	}
 
 	for _, testCaseFile := range files {
@@ -44,6 +58,10 @@ func LoadTestCases(cfg *config.Config) (testCases []*Case, err error) {
 		}
 
 		if cfg.TestCase != "" && testCaseName != cfg.TestCase {
+			continue
+		}
+
+		if testCaseRegex != nil && !testCaseRegex.MatchString(testCaseName) {
 			continue
 		}
 
@@ -98,7 +116,7 @@ func LoadTestCases(cfg *config.Config) (testCases []*Case, err error) {
 		testCases = append(testCases, testCase)
 	}
 
-	if testCases == nil {
+	if len(testCases) == 0 {
 		return nil, errors.New("no tests were selected")
 	}
 

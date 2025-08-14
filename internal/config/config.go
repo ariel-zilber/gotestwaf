@@ -15,7 +15,7 @@ type Config struct {
 	TestCase      string `mapstructure:"testCase"`
 	TestCasesPath string `mapstructure:"testCasesPath"`
 	TestSet       string `mapstructure:"testSet"`
-
+	TestCaseRegex string `mapstructure:"testCaseRegex"`
 	// HTTP client settings
 	HTTPClient     string `mapstructure:"httpClient"`
 	TLSVerify      bool   `mapstructure:"tlsVerify"`
